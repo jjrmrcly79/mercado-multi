@@ -1,5 +1,7 @@
 "use client";
 import Link from "next/link";
+import { useState } from "react";
+import { useParams } from "next/navigation";
 import { useCart } from "@/components/CartProvider";
 
 export default function CartPage({ params }: { params: { storeSlug: string } }) {
@@ -19,6 +21,7 @@ export default function CartPage({ params }: { params: { storeSlug: string } }) 
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Carrito</h1>
+
       <div className="space-y-3">
         {items.map((x) => (
           <div key={x.id} className="flex items-center gap-3 rounded border bg-white p-3">
@@ -40,6 +43,7 @@ export default function CartPage({ params }: { params: { storeSlug: string } }) 
         ))}
       </div>
 
+      {/* Resumen + botón de pago */}
       <div className="rounded border bg-white p-3">
         <div className="flex justify-between">
           <span>Subtotal</span>
@@ -49,12 +53,53 @@ export default function CartPage({ params }: { params: { storeSlug: string } }) 
           <span>Total</span>
           <span>${total.toFixed(2)}</span>
         </div>
-        <button className="mt-3 w-full rounded bg-black px-3 py-2 text-white" disabled>
-          Continuar al pago (próximo paso)
-        </button>
+        <CheckoutButton />
       </div>
 
       <Link href={`/${storeSlug}`} className="text-sm underline">Seguir comprando</Link>
     </div>
+  );
+}
+
+/* === AQUÍ ABAJO ESTÁ EL COMPONENTE CheckoutButton === */
+function CheckoutButton() {
+  const { items } = useCart();
+  const { storeSlug } = useParams<{ storeSlug: string }>();
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function goCheckout() {
+    try {
+      setLoading(true); setErr(null);
+      const payload = {
+        storeSlug,
+        items: items.map(x => ({ id: x.id, qty: x.qty })),
+      };
+      const res = await fetch("/api/checkout/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo crear la sesión");
+      window.location.href = data.url; // redirige a Stripe
+    } catch (e: any) {
+      setErr(e.message || "Error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        className="mt-3 w-full rounded bg-black px-3 py-2 text-white disabled:opacity-50"
+        disabled={loading || !items.length}
+        onClick={goCheckout}
+      >
+        {loading ? "Redirigiendo..." : "Pagar con Stripe"}
+      </button>
+      {err && <p className="mt-2 text-sm text-red-600">{err}</p>}
+    </>
   );
 }
