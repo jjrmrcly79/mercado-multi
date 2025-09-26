@@ -69,26 +69,38 @@ function CheckoutButton() {
   const [err, setErr] = useState<string | null>(null);
 
   async function goCheckout() {
-    try {
-      setLoading(true); setErr(null);
-      const payload = {
-        storeSlug,
-        items: items.map(x => ({ id: x.id, qty: x.qty })),
-      };
-      const res = await fetch("/api/checkout/session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "No se pudo crear la sesión");
-      window.location.href = data.url; // redirige a Stripe
-    } catch (e: any) {
-      setErr(e.message || "Error");
-    } finally {
-      setLoading(false);
+  try {
+    setLoading(true); setErr(null);
+    const payload = {
+      storeSlug,
+      items: items.map(x => ({ id: x.id, qty: x.qty })),
+    };
+    const res = await fetch("/api/checkout/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const text = await res.text();
+    let data: any = {};
+    try { data = JSON.parse(text); } catch { /* HTML u otro formato */ }
+
+    if (!res.ok) {
+      throw new Error(data?.error || text || "No se pudo crear la sesión");
     }
+
+    if (!data?.url) {
+      throw new Error("Respuesta sin URL de checkout");
+    }
+
+    window.location.href = data.url;
+  } catch (e: any) {
+    setErr(e.message || "Error");
+  } finally {
+    setLoading(false);
   }
+}
+
 
   return (
     <>
