@@ -1,41 +1,44 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabase/client";
 
-async function fetchData(storeSlug: string) {
-  // ⚠️ Server Components no pueden usar nuestro cliente de browser directo.
-  // Solución rápida: usar el endpoint público vía fetch (haremos una API),
-  // o convertir esta página en "use client".
-  // Para ir rápido, la hacemos client en esta primera versión.
-  return null as any;
-}
+type Item = { id: string; title: string; price: number; media_url: string | null };
 
 export default function StorePage({ params }: { params: { storeSlug: string } }) {
-  return <StoreClient storeSlug={params.storeSlug} />;
-}
-
-// --- Client version (simple y efectiva) ---
-"use client";
-import { useEffect, useState } from "react";
-
-function StoreClient({ storeSlug }: { storeSlug: string }) {
-  const [items, setItems] = useState<any[]>([]);
+  const storeSlug = params.storeSlug;
+  const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
-      // 1) obtener storeId por slug
-      const { data: store } = await supabase.from("stores").select("id").eq("slug", storeSlug).single();
-      if (!store) { setItems([]); setLoading(false); return; }
+      setLoading(true); setErr(null);
 
-      // 2) traer productos activos con imagen
-      const { data, error } = await supabase.rpc("public_store_products", { p_store: store.id });
-      setItems(error ? [] : (data as any[]));
+      // 1) obtener storeId vía RPC pública (evita RLS en stores)
+      const { data: storeId, error: eId } = await supabase
+        .rpc("store_id_by_slug", { p_slug: storeSlug });
+
+      if (eId || !storeId) {
+        setErr("Tienda no encontrada."); setItems([]); setLoading(false);
+        return;
+      }
+
+      // 2) traer productos públicos de esa tienda
+      const { data, error } = await supabase
+        .rpc("public_store_products", { p_store: storeId });
+
+      if (error) { setErr(error.message); setItems([]); }
+      else setItems((data ?? []) as Item[]);
+
       setLoading(false);
     })();
   }, [storeSlug]);
 
-  if (loading) return <p>Cargando tienda…</p>;
-  if (!items.length) return <p>Sin productos aún.</p>;
+  if (loading) return <p style={{ padding: 16 }}>Cargando tienda…</p>;
+  if (err) return <p style={{ padding: 16 }} className="text-red-600">{err}</p>;
+  if (!items.length) return <p style={{ padding: 16 }}>Sin productos aún.</p>;
 
   return (
     <div className="space-y-4">
@@ -44,7 +47,11 @@ function StoreClient({ storeSlug }: { storeSlug: string }) {
         {items.map((p) => (
           <div key={p.id} className="rounded border bg-white p-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={p.media_url ?? "https://placehold.co/600x400?text=No+image"} alt={p.title} className="mb-2 h-40 w-full rounded object-cover" />
+            <img
+              src={p.media_url ?? "https://placehold.co/600x400?text=No+image"}
+              alt={p.title}
+              className="mb-2 h-40 w-full rounded object-cover"
+            />
             <div className="space-y-1">
               <div className="font-medium">{p.title}</div>
               <div className="text-lg font-semibold">${Number(p.price).toFixed(2)}</div>
@@ -52,7 +59,9 @@ function StoreClient({ storeSlug }: { storeSlug: string }) {
           </div>
         ))}
       </div>
-      <Link href={`/dashboard/${storeSlug}/products`} className="text-sm underline">Soy el dueño — ir al dashboard</Link>
+      <Link href={`/dashboard/${storeSlug}/products`} className="text-sm underline">
+        Soy el dueño — ir al dashboard
+      </Link>
     </div>
   );
 }
