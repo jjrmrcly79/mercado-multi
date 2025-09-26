@@ -11,9 +11,13 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
     const { error } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback` },
-    });
+  email,
+  options: {
+    // usa el callback de servidor, NO el dashboard
+    emailRedirectTo: `http://localhost:3000/auth/callback`,
+  },
+});
+
     if (error) setError(error.message);
     else setSent(true);
   }
