@@ -54,26 +54,24 @@ export async function POST(req: NextRequest) {
     }
 
     const priceById = new Map(rows.map((r) => [r.id, Number(r.price)]));
-    const line_items = items
+        const line_items: Stripe.Checkout.SessionCreateParams.LineItem[] = items
       .map(({ id, qty }) => {
         const unit = priceById.get(id);
         if (!unit || qty <= 0) return null;
+        const title = rows.find(r => r.id === id)?.title || "Producto";
         return {
           quantity: qty,
           price_data: {
             currency: "mxn",
             product_data: {
-              name: rows.find((r) => r.id === id)?.title || "Producto",
+              name: title,
+              metadata: { productId: id },   // 👈 importante para el webhook
             },
             unit_amount: Math.round(unit * 100),
           },
-        } as Stripe.Checkout.SessionCreateParams.LineItem;
+        };
       })
-      .filter(Boolean) as Stripe.Checkout.SessionCreateParams.LineItem[];
-
-    if (!line_items.length) {
-      return NextResponse.json({ error: "Empty cart" }, { status: 400 });
-    }
+      .filter(Boolean) as any[];
 
     const site = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
     const success_url = `${site}/${storeSlug}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
@@ -85,8 +83,12 @@ export async function POST(req: NextRequest) {
       line_items,
       success_url,
       cancel_url,
-      metadata: { storeSlug: String(storeSlug), storeId: String(storeId) },
+      customer_creation: "always",           // crea/usa customer
+      allow_promotion_codes: true,
+      metadata: { storeSlug, storeId: String(storeId) },
+      // optional: shipping_address_collection: { allowed_countries: ['MX','US'] },
     });
+
 
     return NextResponse.json({ url: session.url });
   } catch (e: any) {
