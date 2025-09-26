@@ -1,31 +1,33 @@
-import { redirect } from "next/navigation";
-import { getServerSupabase } from "@/lib/supabase/server";
+"use client";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase/client";
 
-export default async function Dashboard() {
-  const supabase = await getServerSupabase(); // 👈 añade await
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
+export default function Dashboard() {
+  const router = useRouter();
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState<string | null>(null);
 
-  const { data: stores, error } = await supabase
-    .from("stores")
-    .select("id, name, slug")
-    .order("created_at", { ascending: false });
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!mounted) return;
+      if (!user) { router.replace("/login"); return; }
+      setEmail(user.email ?? null);
+      setLoading(false);
+    })();
+    return () => { mounted = false; };
+  }, [router]);
 
+  if (loading) return <p>Entrando…</p>;
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <h1 className="text-2xl font-semibold">Dashboard</h1>
-      <p>Hola, <b>{user.email}</b></p>
-
-      <a href="/dashboard/new" className="inline-block rounded bg-black px-3 py-2 text-white">Nueva tienda</a>
-
-      {error && <p className="text-red-600">{error.message}</p>}
-      <ul className="space-y-2">
-        {(stores ?? []).map((s) => (
-          <li key={s.id} className="rounded border bg-white p-3">
-            <b>{s.name}</b> — <code>/{s.slug}</code>
-          </li>
-        ))}
-      </ul>
+      <p>Hola, <b>{email}</b></p>
+      <form action="/auth/signout" method="post">
+        <button className="rounded bg-black px-3 py-2 text-white">Cerrar sesión</button>
+      </form>
     </div>
   );
 }
