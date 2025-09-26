@@ -14,7 +14,7 @@ export default function LoginPage() {
   email,
   options: {
     // usa el callback de servidor, NO el dashboard
-    emailRedirectTo: `http://localhost:3000/auth/callback`,
+    emailRedirectTo: `http://localhost:3000/auth/complete`,
   },
 });
 
