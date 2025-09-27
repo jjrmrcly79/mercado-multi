@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
       .from("orders")
       .insert({
         store_id: storeId,
-        order_number: folio as string,          // 👈 usa el nombre correcto
+        number: folio as string,          // 👈 usa el nombre correcto
         email,
         currency,
         subtotal: subtotal_cents,               // 👈 centavos
