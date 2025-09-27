@@ -1,13 +1,17 @@
+// src/app/api/checkout/session/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
-function getStripe(): Stripe | null {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) return null;
-  // Opción simple: sin apiVersion para evitar tipos literales
-  return new Stripe(key);
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+if (!STRIPE_SECRET_KEY) {
+  console.warn("Falta STRIPE_SECRET_KEY en .env.local");
 }
+
+// Cliente único de Stripe con versión fija
+const stripe = STRIPE_SECRET_KEY
+  ? new Stripe(STRIPE_SECRET_KEY)
+  : null;
 
 type ReqBody = {
   storeSlug: string;
@@ -16,7 +20,6 @@ type ReqBody = {
 
 export async function POST(req: NextRequest) {
   try {
-    const stripe = getStripe();
     if (!stripe) {
       return NextResponse.json(
         { error: "Falta STRIPE_SECRET_KEY en .env.local" },
@@ -25,11 +28,12 @@ export async function POST(req: NextRequest) {
     }
 
     const { storeSlug, items } = (await req.json()) as ReqBody;
+
     if (!storeSlug || !Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: "Bad request" }, { status: 400 });
     }
 
-    // obtener storeId vía RPC pública
+    // 1) Obtener storeId vía RPC pública
     const { data: storeId, error: eSlug } = await supabaseAdmin.rpc(
       "store_id_by_slug",
       { p_slug: storeSlug }
@@ -38,7 +42,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Store not found" }, { status: 404 });
     }
 
-    // traer productos de DB (valida precios)
+    // 2) Traer productos (validar precios del lado servidor)
     const productIds = items.map((i) => i.id);
     const { data: rows, error: eProds } = await supabaseAdmin
       .from("products")
@@ -54,46 +58,52 @@ export async function POST(req: NextRequest) {
     }
 
     const priceById = new Map(rows.map((r) => [r.id, Number(r.price)]));
-        const line_items: Stripe.Checkout.SessionCreateParams.LineItem[] = items
+
+    // 3) Construir line_items (en centavos)
+    const line_items: Stripe.Checkout.SessionCreateParams.LineItem[] = items
       .map(({ id, qty }) => {
         const unit = priceById.get(id);
-        if (!unit || qty <= 0) return null;
-        const title = rows.find(r => r.id === id)?.title || "Producto";
+        if (unit == null || qty <= 0) return null;
+        const title = rows.find((r) => r.id === id)?.title || "Producto";
         return {
           quantity: qty,
           price_data: {
             currency: "mxn",
+            unit_amount: Math.round(unit * 100), // centavos
             product_data: {
               name: title,
-              metadata: { productId: id },   // 👈 importante para el webhook
+              metadata: { productId: id }, // útil para el webhook
             },
-            unit_amount: Math.round(unit * 100),
           },
+          adjustable_quantity: { enabled: true, minimum: 1, maximum: 99 },
         };
       })
-      .filter(Boolean) as any[];
+      .filter(Boolean) as Stripe.Checkout.SessionCreateParams.LineItem[];
+
+    if (line_items.length === 0) {
+      return NextResponse.json({ error: "No valid items" }, { status: 400 });
+    }
 
     const site = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
     const success_url = `${site}/${storeSlug}/checkout/success?session_id={CHECKOUT_SESSION_ID}`;
     const cancel_url = `${site}/${storeSlug}/cart`;
 
+    // 4) Crear la Checkout Session
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      payment_method_types: ["card"],
+      // payment_method_types ya no es necesario en API recientes; Stripe lo infiere
       line_items,
       success_url,
       cancel_url,
-      customer_creation: "always",           // crea/usa customer
+      customer_creation: "always",
       allow_promotion_codes: true,
       metadata: { storeSlug, storeId: String(storeId) },
-      // optional: shipping_address_collection: { allowed_countries: ['MX','US'] },
+      // shipping_address_collection: { allowed_countries: ["MX", "US"] },
     });
-
 
     return NextResponse.json({ url: session.url });
   } catch (e: any) {
     console.error("checkout session error", e);
-    // si por alguna razón Next lanzó una página HTML, devolvemos texto
     return NextResponse.json(
       { error: e?.message || "Server error" },
       { status: 500 }
