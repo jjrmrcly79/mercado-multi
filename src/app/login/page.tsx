@@ -7,6 +7,12 @@ export default function LoginPage() {
   const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Usa la URL pública definida en env; si no existe, cae al origin actual (útil en dev)
+  const SITE =
+  process.env.NEXT_PUBLIC_SITE_URL ??
+  (typeof window !== "undefined" ? window.location.origin : "");
+
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -14,7 +20,7 @@ export default function LoginPage() {
   email,
   options: {
     // usa el callback de servidor, NO el dashboard
-    emailRedirectTo: `http://localhost:3000/auth/complete`,
+    emailRedirectTo: `${SITE}/auth/complete`,
   },
 });
 
