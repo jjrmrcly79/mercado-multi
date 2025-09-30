@@ -10,6 +10,7 @@ export async function updateStoreSettings(formData: FormData) {
   const supabase = await createServerClient();
 
   const storeId = formData.get('storeId') as string;
+  const slug = formData.get('slug') as string;
   const logoFile = formData.get('logo') as File;
   const primaryColor = formData.get('primary_color') as string;
   const secondaryColor = formData.get('secondary_color') as string;
@@ -60,5 +61,5 @@ export async function updateStoreSettings(formData: FormData) {
     throw new Error('Could not update store settings');
   }
 
-  revalidatePath(`/dashboard/${storeId}/settings`);
+  revalidatePath(`/dashboard/${slug}/settings`);
 }

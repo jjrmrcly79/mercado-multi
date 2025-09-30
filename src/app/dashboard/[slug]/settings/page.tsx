@@ -4,18 +4,21 @@ import { createServerClient } from '@/lib/supabase/server';
 import { SettingsForm } from './_components/settings-form';
 import { notFound } from 'next/navigation';
 
-export default async function StoreSettingsPage({
-  params,
-}: {
+export default async function StoreSettingsPage(props: {
   params: { slug: string };
 }) {
-  // --- FIX IS HERE ---
+  // --- FORCED AWAIT FIX ---
+  // This line forces the function to pause, ensuring props are ready.
+  await new Promise(resolve => setTimeout(resolve, 0));
+
+  const slug = props.params.slug;
+
   const supabase = await createServerClient();
 
   const { data: store, error } = await supabase
     .from('stores')
-    .select('id, name, logo_url, primary_color, secondary_color')
-    .eq('slug', params.slug)
+    .select('id, slug, name, logo_url, primary_color, secondary_color')
+    .eq('slug', slug)
     .single();
 
   if (error || !store) {

@@ -9,6 +9,7 @@ import { updateStoreSettings } from '../actions'; // We will create this action 
 // Define the type for the store prop
 type Store = {
   id: string;
+  slug: string;
   name: string;
   logo_url: string | null;
   primary_color: string | null;
@@ -31,6 +32,8 @@ export function SettingsForm({ store }: { store: Store }) {
     <form action={updateStoreSettings} className="max-w-xl space-y-8">
       {/* Hidden input to pass the store ID to the server action */}
       <input type="hidden" name="storeId" value={store.id} />
+      {/* Hidden input to pass the slug for proper revalidation */}
+      <input type="hidden" name="slug" value={store.slug} />
 
       {/* Logo Upload Section */}
       <div>
