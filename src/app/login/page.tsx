@@ -20,7 +20,7 @@ export default function LoginPage() {
   email,
   options: {
     // usa el callback de servidor, NO el dashboard
-    emailRedirectTo: `${SITE}/auth/complete`,
+    emailRedirectTo: `${SITE}/auth/callback`,
   },
 });
 
