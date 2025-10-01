@@ -2,6 +2,7 @@
 
 import { createServerClient } from "@/lib/supabase/server";
 import OpenAI from "openai";
+import { createClient as createSb } from "@supabase/supabase-js";
 
 // helper para garantizar string desde FormData
 const s = (v: FormDataEntryValue | null) => (v == null ? "" : String(v));
@@ -40,13 +41,28 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
   const currency = s(formData.get("currency")).toUpperCase();
   const supportEmail = s(formData.get("support_email"));
   const supportPhone = s(formData.get("support_phone"));
+  const accessToken = s(formData.get("access_token")); // ← NEW
 
   if (!name || !slug) return { ok: false, error: "Nombre y slug son obligatorios." };
 
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  if (userErr || !user) return { ok: false, error: "Necesitas sesión para crear una tienda." };
+  // 1) intentar leer usuario vía cookies (SSR)
+  let { data: { user } } = await supabase.auth.getUser();
 
-  // subir logo (opcional)
+  // 2) ⛑️ Fallback con JWT si el SSR no ve la sesión
+  let sb = supabase;
+  if (!user && accessToken) {
+    sb = createSb(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { global: { headers: { Authorization: `Bearer ${accessToken}` } } }
+    );
+    const { data: u2 } = await sb.auth.getUser();
+    user = u2.user ?? null;
+  }
+
+  if (!user) return { ok: false, error: "Necesitas sesión para crear una tienda." };
+
+  // 3) subir logo (opcional) usando el cliente autenticado (sb)
   let logoUrl: string | null = null;
   if (logoFile && logoFile.size > 0) {
     const ext = (logoFile.name.split(".").pop() || "png").toLowerCase();
@@ -54,18 +70,19 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
     const arrayBuf = await logoFile.arrayBuffer();
     const buff = Buffer.from(arrayBuf);
 
-    const { error: upErr } = await supabase.storage
+    const { error: upErr } = await sb.storage
       .from("store-logos")
       .upload(path, buff, { contentType: logoFile.type || "image/png", upsert: false });
 
     if (upErr) {
       console.error("Logo upload error:", upErr.message);
     } else {
-      const { data: pub } = supabase.storage.from("store-logos").getPublicUrl(path);
+      const { data: pub } = sb.storage.from("store-logos").getPublicUrl(path);
       logoUrl = pub?.publicUrl ?? null;
     }
   }
 
+  // 4) insert de la tienda con el mismo cliente autenticado (sb)
   const insertPayload: Record<string, any> = {
     owner_id: user.id,
     name,
@@ -79,7 +96,7 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
   if (supportEmail) insertPayload.support_email = supportEmail;
   if (supportPhone) insertPayload.support_phone = supportPhone;
 
-  const { data: storeIns, error: insErr } = await supabase
+  const { data: storeIns, error: insErr } = await sb
     .from("stores")
     .insert(insertPayload)
     .select("id, slug, logo_url")
@@ -95,6 +112,7 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
     brand: { name, brandDescription, brandAudience, brandTone },
   };
 }
+
 
 type BrandParams = {
   storeId: string;

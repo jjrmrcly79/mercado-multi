@@ -1,44 +1,52 @@
-"use client";
+ "use client";
+ import { useState } from "react";
+ import { useRouter } from "next/navigation";
+ import { createStoreWithLogo, generateBrandAndPalette } from "./actions";
+ import { supabase } from "@/lib/supabase/client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { createStoreWithLogo, generateBrandAndPalette } from "./actions";
+ export default function NewStorePage() {
+   const router = useRouter();
+   const [loading, setLoading] = useState(false);
+   const [error, setError] = useState<string | null>(null);
 
-export default function NewStorePage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+   const s = (v: FormDataEntryValue | null) => (v == null ? "" : String(v));
 
-  const s = (v: FormDataEntryValue | null) => (v == null ? "" : String(v));
+   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+     e.preventDefault();
+     setError(null);
+     setLoading(true);
 
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setError(null);
-    setLoading(true);
+     const fd = new FormData(e.currentTarget);
 
-    const fd = new FormData(e.currentTarget);
-
-    // 1) crear tienda + subir logo
-    const res = await createStoreWithLogo(fd);
-    if (!res.ok) {
-      setLoading(false);
-      setError(res.error || "No se pudo crear la tienda.");
-      return;
+    // ⛑️ Fallback: adjunta el access_token por si el server no ve la cookie
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.access_token) {
+      fd.set("access_token", session.access_token);
     }
 
-    // 2) generar identidad con strings seguros
-    await generateBrandAndPalette({
-      storeId: res.storeId,              // string garantizado por el tipo CreateStoreResult
-      name: s(fd.get("name")),
-      brandDescription: s(fd.get("brand_description")),
-      brandAudience: s(fd.get("brand_audience")),
-      brandTone: s(fd.get("brand_tone")),
-      logoUrl: res.logoUrl ?? null,
-    });
+     // 1) crear tienda + subir logo
+     const res = await createStoreWithLogo(fd);
+     if (!res.ok) {
+       setLoading(false);
+       setError(res.error || "No se pudo crear la tienda.");
+       return;
+     }
 
-    setLoading(false);
-    router.push(`/dashboard/${res.slug}/products`);
-  }
+     // 2) generar identidad
+     await generateBrandAndPalette({
+       storeId: res.storeId,
+       name: s(fd.get("name")),
+       brandDescription: s(fd.get("brand_description")),
+       brandAudience: s(fd.get("brand_audience")),
+       brandTone: s(fd.get("brand_tone")),
+       logoUrl: res.logoUrl ?? null,
+     });
+
+     setLoading(false);
+     router.push(`/dashboard/${res.slug}/products`);
+   }
+
+
 
   return (
     <div className="mx-auto max-w-md space-y-4">
