@@ -18,8 +18,11 @@ export default function Header() {
             <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-neutral-500">⌘K</span>
           </div>
         </div>
+ 
         <nav className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" className="gap-2"><LogIn className="h-4 w-4" /> Login</Button>
+          <Link href="/login" className="inline-flex items-center gap-2 px-3 py-2 text-sm hover:underline">
+            <LogIn className="h-4 w-4" /> Login
+          </Link>
           <Button variant="ghost" size="sm" className="gap-2"><Heart className="h-4 w-4" /> Wishlist</Button>
           <CartButton />
         </nav>

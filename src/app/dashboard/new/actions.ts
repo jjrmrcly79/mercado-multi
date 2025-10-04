@@ -29,6 +29,7 @@ export type CreateStoreResult =
  * Sube logo (si existe), crea la tienda y devuelve {storeId, slug, logoUrl}
  */
 export async function createStoreWithLogo(formData: FormData): Promise<CreateStoreResult> {
+  console.log("\n--- [DEBUG] Iniciando createStoreWithLogo ---");
   const supabase = await createServerClient();
 
   const name = s(formData.get("name")).trim();
@@ -41,16 +42,18 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
   const currency = s(formData.get("currency")).toUpperCase();
   const supportEmail = s(formData.get("support_email"));
   const supportPhone = s(formData.get("support_phone"));
-  const accessToken = s(formData.get("access_token")); // ← NEW
+  const accessToken = s(formData.get("access_token"));
 
   if (!name || !slug) return { ok: false, error: "Nombre y slug son obligatorios." };
 
   // 1) intentar leer usuario vía cookies (SSR)
   let { data: { user } } = await supabase.auth.getUser();
+  console.log(`[DEBUG] Usuario obtenido por cookies (servidor): ${user?.id || "No encontrado"}`);
 
   // 2) ⛑️ Fallback con JWT si el SSR no ve la sesión
   let sb = supabase;
   if (!user && accessToken) {
+    console.log("[DEBUG] Fallback: Intentando obtener usuario con access_token.");
     sb = createSb(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -58,9 +61,15 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
     );
     const { data: u2 } = await sb.auth.getUser();
     user = u2.user ?? null;
+    console.log(`[DEBUG] Usuario obtenido por fallback: ${user?.id || "No encontrado"}`);
   }
 
-  if (!user) return { ok: false, error: "Necesitas sesión para crear una tienda." };
+  if (!user) {
+    console.error("⛔ [ERROR] No se pudo autenticar al usuario por ningún método.");
+    return { ok: false, error: "Necesitas sesión para crear una tienda." };
+  }
+
+  console.log(`✅ [DEBUG] Usuario autenticado con ID: ${user.id}`);
 
   // 3) subir logo (opcional) usando el cliente autenticado (sb)
   let logoUrl: string | null = null;
@@ -75,10 +84,11 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
       .upload(path, buff, { contentType: logoFile.type || "image/png", upsert: false });
 
     if (upErr) {
-      console.error("Logo upload error:", upErr.message);
+      console.error("⚠️ [ERROR] Logo upload error:", upErr.message);
     } else {
       const { data: pub } = sb.storage.from("store-logos").getPublicUrl(path);
       logoUrl = pub?.publicUrl ?? null;
+      console.log(`[DEBUG] Logo subido a: ${logoUrl}`);
     }
   }
 
@@ -96,13 +106,20 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
   if (supportEmail) insertPayload.support_email = supportEmail;
   if (supportPhone) insertPayload.support_phone = supportPhone;
 
+  console.log("[DEBUG] Payload para insertar en la BD:", JSON.stringify(insertPayload, null, 2));
+
   const { data: storeIns, error: insErr } = await sb
     .from("stores")
     .insert(insertPayload)
     .select("id, slug, logo_url")
     .single();
 
-  if (insErr) return { ok: false, error: `No pude crear la tienda: ${insErr.message}` };
+  if (insErr) {
+    console.error("⛔ [ERROR DE SUPABASE AL INSERTAR]:", JSON.stringify(insErr, null, 2));
+    return { ok: false, error: `No pude crear la tienda: ${insErr.message}` };
+  }
+  
+  console.log("✅ [SUCCESS] Tienda creada con éxito:", storeIns);
 
   return {
     ok: true,
@@ -228,4 +245,3 @@ Devuelve JSON con claves exactamente:
 
   return { ok: true, mission, vision, values, palette };
 }
-
