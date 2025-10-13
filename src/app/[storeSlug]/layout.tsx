@@ -1,16 +1,18 @@
-"use client";
+// src/app/[storeSlug]/layout.tsx
+import StoreNavbar from "@/components/nav/StoreNavbar";
+import { CartProvider } from "@/components/CartProvider";
 
-import { usePathname } from "next/navigation";
-import CartProvider from "@/components/CartProvider";
-
-export default function StoreSegmentLayout({ children }: { children: React.ReactNode }) {
-  // Derivar el slug de la URL en cliente (evita el Promise de params)
-  const pathname = usePathname();
-  const storeSlug = pathname.split("/").filter(Boolean)[0] || "";
-
+export default function StoreLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: { storeSlug: string };
+}) {
   return (
-    <CartProvider storeSlug={storeSlug}>
-      {children}
+    <CartProvider storeSlug={params.storeSlug}>
+      <StoreNavbar />
+      <main>{children}</main>
     </CartProvider>
   );
 }

@@ -1,18 +1,19 @@
+// src/app/layout.tsx
 import type { Metadata } from "next";
+import RootNavbar from "@/components/nav/RootNavbar";
 import "./globals.css";
-import Header from "@/components/Header";
 
 export const metadata: Metadata = {
-  title: "Mercado Multi",
-  description: "Multi-tenant ecommerce boilerplate",
+  title: "mercado-multi",
+  description: "Multi-tienda simple con Next/Supabase/Stripe",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-neutral-50 text-neutral-900">
-        <Header />
-        <main className="mx-auto w-full max-w-6xl px-4 py-6">{children}</main>
+    <html lang="es">
+      <body>
+        <RootNavbar />
+        <main>{children}</main>
       </body>
     </html>
   );
