@@ -1,147 +1,142 @@
+// src/app/api/stripe/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-// ❌ Se elimina la siguiente línea porque no se usa:
-// import { headers } from "next/headers"; 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY!;
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET!;
 
-const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+const stripe = new Stripe(STRIPE_SECRET_KEY);
 
 export async function POST(req: NextRequest) {
-  console.log("✅ Webhook endpoint hit!");
-
-  if (!stripe || !STRIPE_WEBHOOK_SECRET) {
-    console.error("❌ Missing Stripe environment variables.");
+  const sig = req.headers.get("stripe-signature");
+  if (!sig || !STRIPE_WEBHOOK_SECRET) {
     return NextResponse.json({ error: "Missing Stripe env" }, { status: 500 });
   }
 
-  const sig = req.headers.get("stripe-signature");
-  if (!sig) {
-    console.error("❌ Missing stripe-signature header.");
-    return new NextResponse("Missing signature", { status: 400 });
-  }
-  
   const raw = await req.text();
   let event: Stripe.Event;
-
   try {
     event = stripe.webhooks.constructEvent(raw, sig, STRIPE_WEBHOOK_SECRET);
-    console.log(`✅ Signature verified. Event ID: ${event.id}`);
-  } catch (err) {
-    let errorMessage = "An unknown error occurred during webhook signature verification.";
-    
-    if (err instanceof Error) {
-      errorMessage = err.message;
-    }
-    
-    console.error(`❌ Webhook signature verification failed:`, errorMessage);
-    return new NextResponse(`Webhook Error: ${errorMessage}`, { status: 400 });
+  } catch (err: any) {
+    return new NextResponse(`Webhook Error: ${err.message}`, { status: 400 });
   }
 
   if (event.type !== "checkout.session.completed") {
-    console.log(`- Ignoring event type: ${event.type}`);
     return NextResponse.json({ received: true, ignored: true });
   }
 
   try {
-    console.log("🛒 Event: checkout.session.completed detected.");
     const session = event.data.object as Stripe.Checkout.Session;
+    const sessionId = session.id;
+
+    // Idempotencia: si ya procesamos esta sesión, salimos
+    const { data: existing } = await supabaseAdmin
+      .from("orders")
+      .select("id")
+      .eq("checkout_session_id", sessionId)
+      .maybeSingle();
+    if (existing) return NextResponse.json({ received: true, duplicate: true });
 
     const storeSlug = String(session.metadata?.storeSlug ?? "");
-    const storeId = String(session.metadata?.storeId ?? "");
-
+    const storeId   = String(session.metadata?.storeId ?? "");
     if (!storeSlug || !storeId) {
-      console.error("❌ Missing store metadata in session:", session.metadata);
       return NextResponse.json({ error: "Missing store metadata" }, { status: 400 });
     }
-    console.log("📦 Metadata received:", { storeSlug, storeId });
 
-    console.log(`⏳ Fetching line items for session: ${session.id}`);
-    const lineItems = await stripe.checkout.sessions.listLineItems(session.id, {
+    // Obtenemos line items (con producto expandido para leer productId)
+    const lineItems = await stripe.checkout.sessions.listLineItems(sessionId, {
       expand: ["data.price.product"],
       limit: 100,
     });
-    console.log(`✅ Line items fetched. Count: ${lineItems.data.length}`);
 
-    let subtotalPesos = 0;
-    const itemsForInsert = lineItems.data.map(li => {
+    // Stripe devuelve centavos: convertimos a pesos (numeric)
+    let subtotalCents = 0;
+    const itemsPayload = lineItems.data.map((li) => {
       const qty = li.quantity ?? 1;
-      const unitCents = li.price?.unit_amount ?? 0;
-      const unitPesos = unitCents / 100;
-      subtotalPesos += (li.amount_subtotal ?? 0) / 100;
+      const unitAmountCents = li.price?.unit_amount ?? 0;
+      const amountSubtotalCents = li.amount_subtotal ?? unitAmountCents * qty;
+
+      subtotalCents += amountSubtotalCents;
 
       let product_id: string | null = null;
       if (li.price?.product && typeof li.price.product !== "string") {
         const prod = li.price.product as Stripe.Product;
-        product_id = prod.metadata?.productId ?? null;
+        product_id = (prod.metadata?.productId as string) ?? null;
       }
-      return { product_id, title: li.description, unit_price: unitPesos, qty };
+
+      return {
+        product_id,
+        title: li.description || "Producto",
+        unit_amount_pesos: (unitAmountCents ?? 0) / 100,            // numeric (pesos)
+        quantity: qty,
+        amount_subtotal_pesos: (amountSubtotalCents ?? 0) / 100,    // numeric (pesos)
+        amount_total_pesos: (li.amount_total ?? amountSubtotalCents) / 100, // numeric
+      };
     });
 
-    const totalPesos = (session.amount_total ?? 0) / 100;
-    
-    const rpcParams = { p_store: storeId, p_slug: storeSlug };
-    console.log("⏳ Calling RPC 'next_order_number' with params:", rpcParams);
-    const { data: folio, error: folioErr } = await supabaseAdmin.rpc("next_order_number", rpcParams);
+    const totalPesos =
+      (session.amount_total != null ? session.amount_total : subtotalCents) / 100;
 
-    if (folioErr) throw folioErr;
-    if (!folio) throw new Error("RPC next_order_number returned null or empty.");
-    console.log(`🧾 Order number generated: ${folio}`);
+    const email    = session.customer_details?.email ?? session.customer_email ?? null;
+    const currency = (session.currency ?? "mxn").toUpperCase();
 
-    const orderPayload = {
-      store_id: storeId,
-      number: folio as string,
-      email: session.customer_details?.email ?? session.customer_email ?? null,
-      subtotal: subtotalPesos,
-      total: totalPesos,
-      status: "paid",
-      discount_total: 0,
-      shipping_total: 0,
-      tax_total: 0,
-    };
-    console.log("✍️ Inserting into 'orders' table:", orderPayload);
+    // Folio: usamos tu RPC existente; devuelve el siguiente número
+    const { data: folio, error: eNum } = await supabaseAdmin.rpc("next_order_number", {
+      p_store: storeId,
+      p_slug: storeSlug,
+    });
+    if (eNum || !folio) throw eNum ?? new Error("No order number");
 
-    const { data: order, error: ordErr } = await supabaseAdmin
+    // Insertar orden (CAMPO FOLIO = number) y montos en pesos (numeric)
+    const { data: order, error: eOrd } = await supabaseAdmin
       .from("orders")
-      .insert(orderPayload)
+      .insert({
+        store_id: storeId,
+        number: String(folio),      // <-- tu columna se llama 'number'
+        email,
+        currency,
+        subtotal: subtotalCents / 100,
+        discount_total: 0,
+        shipping_total: 0,
+        tax_total: 0,
+        total: totalPesos,
+        status: "paid",
+        checkout_session_id: sessionId,
+        // shipping_address: session.customer_details?.address ?? null, // si decides guardarla
+      })
       .select("id")
       .single();
+    if (eOrd) throw eOrd;
 
-    if (ordErr) throw ordErr;
-    console.log(`✅ Order created successfully with ID: ${order.id}`);
+    // Insertar items (pesos)
+    const { error: eItems } = await supabaseAdmin.from("order_items").insert(
+      itemsPayload.map((i) => ({
+        order_id: order.id,
+        store_id: storeId,
+        product_id: i.product_id,
+        title: i.title,
+        unit_amount: i.unit_amount_pesos,
+        quantity: i.quantity,
+        amount_subtotal: i.amount_subtotal_pesos,
+        amount_total: i.amount_total_pesos,
+      }))
+    );
+    if (eItems) throw eItems;
 
-    const itemsPayload = itemsForInsert.map(i => ({
-      order_id: order.id,
-      product_id: i.product_id,
-      title: i.title,
-      unit_price: i.unit_price,
-      qty: i.qty,
-    }));
-    console.log("✍️ Inserting into 'order_items':", itemsPayload);
+    // (Opcional) Decremento de stock: activamos cuando confirmes el RPC
+    // for (const i of itemsPayload) {
+    //   if (i.product_id) {
+    //     await supabaseAdmin.rpc("decrement_stock", { p_product: i.product_id, p_qty: i.quantity });
+    //   }
+    // }
 
-    const { error: itemsErr } = await supabaseAdmin.from("order_items").insert(itemsPayload);
-    if (itemsErr) throw itemsErr;
-
-    console.log("✅ Order items inserted successfully.");
-    console.log("🎉 SUCCESS! Order fully processed:", { orderId: order.id, number: folio });
-    
     return NextResponse.json({ received: true });
-
-  } catch (e) {
-    console.error("--- ❌ STRIPE WEBHOOK PROCESSING ERROR ---");
-    console.error("El objeto de error completo es:", e);
-    console.error("-----------------------------------------");
-
-    let errorMessage = "An unknown server error occurred.";
-    if (e instanceof Error) {
-      errorMessage = e.message;
-    }
-
-    return NextResponse.json({ error: errorMessage }, { status: 500 });
+  } catch (e: any) {
+    console.error("stripe webhook error", e);
+    return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
   }
 }

@@ -3,15 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
 if (!STRIPE_SECRET_KEY) {
   console.warn("Falta STRIPE_SECRET_KEY en .env.local");
 }
 
-// Cliente único de Stripe con versión fija
-const stripe = STRIPE_SECRET_KEY
-  ? new Stripe(STRIPE_SECRET_KEY)
-  : null;
+// Cliente único de Stripe (opcional: fija versión del API)
+const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY /*, { apiVersion: "2024-06-20" } */) : null;
 
 type ReqBody = {
   storeSlug: string;
@@ -91,22 +92,21 @@ export async function POST(req: NextRequest) {
     // 4) Crear la Checkout Session
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
-      // payment_method_types ya no es necesario en API recientes; Stripe lo infiere
+      // payment_method_types ya no es necesario; Stripe lo infiere
       line_items,
       success_url,
       cancel_url,
       customer_creation: "always",
       allow_promotion_codes: true,
       metadata: { storeSlug, storeId: String(storeId) },
-      // shipping_address_collection: { allowed_countries: ["MX", "US"] },
+      // Actívalo cuando quieras recolectar dirección:
+      // shipping_address_collection: { allowed_countries: ["MX"] },
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (e) {
-  if (e instanceof Error) {
-    console.error(e.message); // Ahora 'e' es de tipo Error
-  } else {
-    console.error("An unknown error occurred", e);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : "Unknown error";
+    console.error("checkout session error:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
-}
 }
