@@ -16,6 +16,7 @@ type Ctx = {
   addItem: (it: CartItem) => void;
   removeItem: (id: string) => void;
   setQty: (id: string, qty: number) => void;
+  clear: () => void;                 // 👈 nuevo
   subtotal: number;
   total: number;
   storeSlug: string;
@@ -32,7 +33,6 @@ export function CartProvider({
 }) {
   const [items, setItems] = useState<CartItem[]>([]);
 
-  // Cargar carrito desde LocalStorage al montar/cambiar de tienda
   useEffect(() => {
     setItems(loadCart(storeSlug));
   }, [storeSlug]);
@@ -41,19 +41,17 @@ export function CartProvider({
     const addItem = (it: CartItem) => setItems(add(storeSlug, it));
     const removeItem = (id: string) => setItems(rem(storeSlug, id));
     const setQty = (id: string, qty: number) => setItems(setq(storeSlug, id, qty));
+    const clear = () => {
+      // limpia localStorage y estado
+      try {
+        localStorage.setItem(`cart:${storeSlug}`, JSON.stringify([]));
+      } catch {}
+      setItems([]);
+    };
     const { subtotal, total } = totals(items);
     const count = items.reduce((s, x) => s + x.qty, 0);
 
-    return {
-      items,
-      count,
-      addItem,
-      removeItem,
-      setQty,
-      subtotal,
-      total,
-      storeSlug,
-    };
+    return { items, count, addItem, removeItem, setQty, clear, subtotal, total, storeSlug };
   }, [items, storeSlug]);
 
   return <CartCtx.Provider value={api}>{children}</CartCtx.Provider>;
@@ -64,5 +62,3 @@ export function useCart() {
   if (!ctx) throw new Error("useCart must be used within <CartProvider/>");
   return ctx;
 }
-
-// ❌ NO default export: evita duplicidades e imports ambiguos
