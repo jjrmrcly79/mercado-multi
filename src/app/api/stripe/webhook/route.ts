@@ -63,13 +63,16 @@ export async function POST(req: NextRequest) {
       subtotalCents += amountSubtotalCents;
 
       let product_id: string | null = null;
+      let variant_id: string | null = null;
       if (li.price?.product && typeof li.price.product !== "string") {
         const prod = li.price.product as Stripe.Product;
         product_id = (prod.metadata?.productId as string) ?? null;
+        variant_id = (prod.metadata?.variantId as string) ?? null; 
       }
 
       return {
         product_id,
+        variant_id,
         title: li.description || "Producto",
         unit_amount_pesos: (unitAmountCents ?? 0) / 100,            // numeric (pesos)
         quantity: qty,
@@ -113,26 +116,38 @@ export async function POST(req: NextRequest) {
     if (eOrd) throw eOrd;
 
     // Insertar items (pesos)
-    const { error: eItems } = await supabaseAdmin.from("order_items").insert(
-      itemsPayload.map((i) => ({
-        order_id: order.id,
-        store_id: storeId,
-        product_id: i.product_id,
-        title: i.title,
-        unit_amount: i.unit_amount_pesos,
-        quantity: i.quantity,
-        amount_subtotal: i.amount_subtotal_pesos,
-        amount_total: i.amount_total_pesos,
-      }))
-    );
-    if (eItems) throw eItems;
+    // 9) Insertar items de la orden
+// 9) Insertar items de la orden (ajustado a tu esquema)
+const { error: eItems } = await supabaseAdmin.from("order_items").insert(
+  itemsPayload.map((i) => ({
+    order_id: order.id,
+    store_id: storeId,
+    product_id: i.product_id,
+    variant_id: i.variant_id,          // 👈 guardar variante si existe
+    title: i.title,
+    unit_price: i.unit_amount_pesos,   // tu esquema pide unit_price
+    qty: i.quantity,                   // tu esquema usa qty (NOT NULL)
+    amount_subtotal: i.amount_subtotal_pesos,
+    amount_total: i.amount_total_pesos,
+  }))
+);
+if (eItems) throw eItems;
 
-    // (Opcional) Decremento de stock: activamos cuando confirmes el RPC
-    // for (const i of itemsPayload) {
-    //   if (i.product_id) {
-    //     await supabaseAdmin.rpc("decrement_stock", { p_product: i.product_id, p_qty: i.quantity });
-    //   }
-    // }
+
+
+// Descuento de stock: variante primero, si no hay variante, (opcional) producto
+for (const i of itemsPayload) {
+  if (i.variant_id && i.quantity > 0) {
+    await supabaseAdmin.rpc("decrement_variant_stock", {
+      p_variant: i.variant_id,
+      p_qty: i.quantity,
+    });
+  } else if (i.product_id && i.quantity > 0) {
+    // Si quieres también manejar stock por producto cuando no hay variante:
+    // await supabaseAdmin.rpc("decrement_stock", { p_product: i.product_id, p_qty: i.quantity });
+  }
+}
+
 
     return NextResponse.json({ received: true });
   } catch (e: any) {

@@ -1,33 +1,46 @@
 "use client";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCart } from "@/components/CartProvider";
 
 export default function SuccessPage() {
   const params = useSearchParams();
   const sessionId = params.get("session_id");
-  const { clear, storeSlug } = useCart();  // 👈 usamos clear del contexto
+  const { clear, storeSlug } = useCart();
   const [order, setOrder] = useState<any>(null);
   const [err, setErr] = useState<string | null>(null);
+
+  // Evitar limpiar más de una vez (StrictMode monta/desmonta en dev)
+  const clearedOnce = useRef(false);
 
   useEffect(() => {
     if (!sessionId) return;
 
+    const ctrl = new AbortController();
+
     (async () => {
       try {
-        const res = await fetch(`/api/orders?session_id=${encodeURIComponent(sessionId)}`);
+        const res = await fetch(`/api/orders?session_id=${encodeURIComponent(sessionId)}`, {
+          signal: ctrl.signal,
+        });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "No se pudo cargar la orden");
 
         setOrder(data);
 
-        // Vacía el carrito SOLO si la orden existe (webhook OK)
-        clear();
+        // Limpia el carrito solo una vez cuando la orden existe
+        if (!clearedOnce.current) {
+          clearedOnce.current = true;
+          clear();
+        }
       } catch (e: any) {
-        setErr(e.message || "Error");
+        if (e.name !== "AbortError") setErr(e.message || "Error");
       }
     })();
-  }, [sessionId, clear]);
+
+    return () => ctrl.abort();
+    // 👇 OJO: solo depende de sessionId. No incluyas `clear`.
+  }, [sessionId]);
 
   if (!sessionId) return <div className="p-6">Falta session_id</div>;
   if (err) return <div className="p-6 text-red-600">{err}</div>;

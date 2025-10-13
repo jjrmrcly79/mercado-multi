@@ -16,7 +16,7 @@ type Ctx = {
   addItem: (it: CartItem) => void;
   removeItem: (id: string) => void;
   setQty: (id: string, qty: number) => void;
-  clear: () => void;                 // 👈 nuevo
+  clear: () => void; // nuevo
   subtotal: number;
   total: number;
   storeSlug: string;
@@ -33,6 +33,7 @@ export function CartProvider({
 }) {
   const [items, setItems] = useState<CartItem[]>([]);
 
+  // Carga inicial del carrito para el slug actual
   useEffect(() => {
     setItems(loadCart(storeSlug));
   }, [storeSlug]);
