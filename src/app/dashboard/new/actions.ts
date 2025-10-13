@@ -25,35 +25,21 @@ export type CreateStoreResult =
     }
   | { ok: false; error: string };
 
-/**
- * Sube logo (si existe), crea la tienda y devuelve {storeId, slug, logoUrl}
- */
 export async function createStoreWithLogo(formData: FormData): Promise<CreateStoreResult> {
-  console.log("\n--- [DEBUG] Iniciando createStoreWithLogo ---");
+  console.log("--- Iniciando createStoreWithLogo (v5 - SECURITY DEFINER) ---");
   const supabase = await createServerClient();
-
+  
   const name = s(formData.get("name")).trim();
   const slug = s(formData.get("slug")).trim().toLowerCase();
   const logoFile = formData.get("logo") as File | null;
-
   const brandDescription = s(formData.get("brand_description"));
   const brandAudience = s(formData.get("brand_audience"));
   const brandTone = s(formData.get("brand_tone"));
-  const currency = s(formData.get("currency")).toUpperCase();
-  const supportEmail = s(formData.get("support_email"));
-  const supportPhone = s(formData.get("support_phone"));
   const accessToken = s(formData.get("access_token"));
 
-  if (!name || !slug) return { ok: false, error: "Nombre y slug son obligatorios." };
-
-  // 1) intentar leer usuario vía cookies (SSR)
   let { data: { user } } = await supabase.auth.getUser();
-  console.log(`[DEBUG] Usuario obtenido por cookies (servidor): ${user?.id || "No encontrado"}`);
-
-  // 2) ⛑️ Fallback con JWT si el SSR no ve la sesión
   let sb = supabase;
   if (!user && accessToken) {
-    console.log("[DEBUG] Fallback: Intentando obtener usuario con access_token.");
     sb = createSb(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -61,65 +47,44 @@ export async function createStoreWithLogo(formData: FormData): Promise<CreateSto
     );
     const { data: u2 } = await sb.auth.getUser();
     user = u2.user ?? null;
-    console.log(`[DEBUG] Usuario obtenido por fallback: ${user?.id || "No encontrado"}`);
   }
-
   if (!user) {
-    console.error("⛔ [ERROR] No se pudo autenticar al usuario por ningún método.");
     return { ok: false, error: "Necesitas sesión para crear una tienda." };
   }
 
-  console.log(`✅ [DEBUG] Usuario autenticado con ID: ${user.id}`);
-
-  // 3) subir logo (opcional) usando el cliente autenticado (sb)
   let logoUrl: string | null = null;
   if (logoFile && logoFile.size > 0) {
     const ext = (logoFile.name.split(".").pop() || "png").toLowerCase();
     const path = `${user.id}/${slug}/${randomUUID()}.${ext}`;
-    const arrayBuf = await logoFile.arrayBuffer();
-    const buff = Buffer.from(arrayBuf);
-
-    const { error: upErr } = await sb.storage
-      .from("store-logos")
-      .upload(path, buff, { contentType: logoFile.type || "image/png", upsert: false });
-
+    const { error: upErr } = await sb.storage.from("store-logos").upload(path, logoFile);
     if (upErr) {
-      console.error("⚠️ [ERROR] Logo upload error:", upErr.message);
+      console.error("Logo upload error:", upErr.message);
     } else {
       const { data: pub } = sb.storage.from("store-logos").getPublicUrl(path);
       logoUrl = pub?.publicUrl ?? null;
-      console.log(`[DEBUG] Logo subido a: ${logoUrl}`);
     }
   }
 
-  // 4) insert de la tienda con el mismo cliente autenticado (sb)
-  const insertPayload: Record<string, any> = {
-    owner_id: user.id,
-    name,
-    slug,
-  };
-  if (logoUrl) insertPayload.logo_url = logoUrl;
-  if (currency) insertPayload.currency = currency;
-  if (brandDescription) insertPayload.brand_description = brandDescription;
-  if (brandAudience) insertPayload.brand_audience = brandAudience;
-  if (brandTone) insertPayload.brand_tone = brandTone;
-  if (supportEmail) insertPayload.support_email = supportEmail;
-  if (supportPhone) insertPayload.support_phone = supportPhone;
-
-  console.log("[DEBUG] Payload para insertar en la BD:", JSON.stringify(insertPayload, null, 2));
-
+  console.log(`[DEBUG] Calling RPC 'create_store_and_add_owner' as user ${user.id}`);
   const { data: storeIns, error: insErr } = await sb
-    .from("stores")
-    .insert(insertPayload)
-    .select("id, slug, logo_url")
+    .rpc('create_store_and_add_owner', {
+      p_user_id: user.id,
+      p_name: name,
+      p_slug: slug,
+      p_logo_url: logoUrl,
+      p_brand_description: brandDescription,
+      p_brand_audience: brandAudience,
+      p_brand_tone: brandTone
+    })
+    .select()
     .single();
 
   if (insErr) {
-    console.error("⛔ [ERROR DE SUPABASE AL INSERTAR]:", JSON.stringify(insErr, null, 2));
+    console.error("⛔ [ERROR DE SUPABASE AL RPC]:", JSON.stringify(insErr, null, 2));
     return { ok: false, error: `No pude crear la tienda: ${insErr.message}` };
   }
-  
-  console.log("✅ [SUCCESS] Tienda creada con éxito:", storeIns);
+
+  console.log("✅ [SUCCESS] Tienda creada con RPC:", storeIns);
 
   return {
     ok: true,
@@ -140,6 +105,22 @@ type BrandParams = {
   logoUrl?: string | null;
 };
 
+// ✅ CORRECCIÓN: Se define un tipo para la paleta de colores y el payload de actualización
+type ColorPalette = {
+  colors: string[];
+  primary: string;
+  secondary: string;
+};
+
+type StoreBrandPayload = {
+  mission: string;
+  vision: string;
+  values: string[];
+  palette: ColorPalette;
+  primary_color: string;
+  secondary_color: string;
+};
+
 export async function generateBrandAndPalette(params: BrandParams) {
   const supabase = await createServerClient();
 
@@ -150,7 +131,6 @@ export async function generateBrandAndPalette(params: BrandParams) {
   const brandTone = params.brandTone ?? "";
   const logoUrl = params.logoUrl ?? null;
 
-  // OPENAI_API_KEY siempre string
   const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
   if (!OPENAI_API_KEY) {
     console.warn("OPENAI_API_KEY no configurada; usando fallback.");
@@ -178,7 +158,7 @@ Devuelve JSON con claves exactamente:
   let mission = "";
   let vision = "";
   let values: string[] = [];
-  let palette = { colors: [] as string[], primary: "", secondary: "" };
+  let palette: ColorPalette = { colors: [], primary: "", secondary: "" };
 
   try {
     if (OPENAI_API_KEY) {
@@ -201,11 +181,14 @@ Devuelve JSON con claves exactamente:
         palette.secondary = String(json.palette.secondary ?? palette.colors[1] ?? "");
       }
     }
-  } catch (e: any) {
-    console.error("OpenAI error:", e?.message || e);
+  } catch (e) {
+    if (e instanceof Error) {
+      console.error("OpenAI error:", e.message);
+    } else {
+      console.error("An unknown OpenAI error occurred", e);
+    }
   }
 
-  // fallbacks para asegurar strings
   if (!mission) mission = `Hacer crecer ${name} con calidad y cercanía.`;
   if (!vision)
     vision =
@@ -219,9 +202,9 @@ Devuelve JSON con claves exactamente:
       secondary: "#10B981",
     };
   }
-
-  // update best-effort
-  const updatePayload: Record<string, any> = {
+  
+  // ✅ CORRECCIÓN: Se usa el tipo específico 'StoreBrandPayload' en lugar de 'any'
+  const updatePayload: StoreBrandPayload = {
     mission,
     vision,
     values,

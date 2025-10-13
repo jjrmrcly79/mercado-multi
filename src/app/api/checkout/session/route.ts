@@ -102,11 +102,11 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ url: session.url });
-  } catch (e: any) {
-    console.error("checkout session error", e);
-    return NextResponse.json(
-      { error: e?.message || "Server error" },
-      { status: 500 }
-    );
+  } catch (e) {
+  if (e instanceof Error) {
+    console.error(e.message); // Ahora 'e' es de tipo Error
+  } else {
+    console.error("An unknown error occurred", e);
   }
+}
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
-// Usando 'headers' para leer la firma de forma segura en App Router
-import { headers } from "next/headers"; 
+// ❌ Se elimina la siguiente línea porque no se usa:
+// import { headers } from "next/headers"; 
 import { supabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -13,7 +13,7 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 
 export async function POST(req: NextRequest) {
-  console.log("✅ Webhook endpoint hit!"); // Log #1
+  console.log("✅ Webhook endpoint hit!");
 
   if (!stripe || !STRIPE_WEBHOOK_SECRET) {
     console.error("❌ Missing Stripe environment variables.");
@@ -31,20 +31,25 @@ export async function POST(req: NextRequest) {
 
   try {
     event = stripe.webhooks.constructEvent(raw, sig, STRIPE_WEBHOOK_SECRET);
-    console.log(`✅ Signature verified. Event ID: ${event.id}`); // Log #2
-  } catch (err: any) {
-    console.error(`❌ Webhook signature verification failed:`, err.message);
-    return new NextResponse(`Webhook Error: ${err.message}`, { status: 400 });
+    console.log(`✅ Signature verified. Event ID: ${event.id}`);
+  } catch (err) {
+    let errorMessage = "An unknown error occurred during webhook signature verification.";
+    
+    if (err instanceof Error) {
+      errorMessage = err.message;
+    }
+    
+    console.error(`❌ Webhook signature verification failed:`, errorMessage);
+    return new NextResponse(`Webhook Error: ${errorMessage}`, { status: 400 });
   }
 
-  // Solo nos interesa el evento que confirma el pago
   if (event.type !== "checkout.session.completed") {
     console.log(`- Ignoring event type: ${event.type}`);
     return NextResponse.json({ received: true, ignored: true });
   }
 
   try {
-    console.log("🛒 Event: checkout.session.completed detected."); // Log #3
+    console.log("🛒 Event: checkout.session.completed detected.");
     const session = event.data.object as Stripe.Checkout.Session;
 
     const storeSlug = String(session.metadata?.storeSlug ?? "");
@@ -54,15 +59,14 @@ export async function POST(req: NextRequest) {
       console.error("❌ Missing store metadata in session:", session.metadata);
       return NextResponse.json({ error: "Missing store metadata" }, { status: 400 });
     }
-    console.log("📦 Metadata received:", { storeSlug, storeId }); // Log #4
+    console.log("📦 Metadata received:", { storeSlug, storeId });
 
-    // Traer line items de la sesión
-    console.log(`⏳ Fetching line items for session: ${session.id}`); // Log #5
+    console.log(`⏳ Fetching line items for session: ${session.id}`);
     const lineItems = await stripe.checkout.sessions.listLineItems(session.id, {
       expand: ["data.price.product"],
       limit: 100,
     });
-    console.log(`✅ Line items fetched. Count: ${lineItems.data.length}`); // Log #6
+    console.log(`✅ Line items fetched. Count: ${lineItems.data.length}`);
 
     let subtotalPesos = 0;
     const itemsForInsert = lineItems.data.map(li => {
@@ -81,16 +85,14 @@ export async function POST(req: NextRequest) {
 
     const totalPesos = (session.amount_total ?? 0) / 100;
     
-    // Llamar al RPC para el folio
     const rpcParams = { p_store: storeId, p_slug: storeSlug };
-    console.log("⏳ Calling RPC 'next_order_number' with params:", rpcParams); // Log #7
+    console.log("⏳ Calling RPC 'next_order_number' with params:", rpcParams);
     const { data: folio, error: folioErr } = await supabaseAdmin.rpc("next_order_number", rpcParams);
 
     if (folioErr) throw folioErr;
     if (!folio) throw new Error("RPC next_order_number returned null or empty.");
-    console.log(`🧾 Order number generated: ${folio}`); // Log #8
+    console.log(`🧾 Order number generated: ${folio}`);
 
-    // Preparar datos para la orden
     const orderPayload = {
       store_id: storeId,
       number: folio as string,
@@ -98,12 +100,11 @@ export async function POST(req: NextRequest) {
       subtotal: subtotalPesos,
       total: totalPesos,
       status: "paid",
-      // Asegúrate que tu tabla tiene estos defaults o quítalos si no existen
       discount_total: 0,
       shipping_total: 0,
       tax_total: 0,
     };
-    console.log("✍️ Inserting into 'orders' table:", orderPayload); // Log #9
+    console.log("✍️ Inserting into 'orders' table:", orderPayload);
 
     const { data: order, error: ordErr } = await supabaseAdmin
       .from("orders")
@@ -112,9 +113,8 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (ordErr) throw ordErr;
-    console.log(`✅ Order created successfully with ID: ${order.id}`); // Log #10
+    console.log(`✅ Order created successfully with ID: ${order.id}`);
 
-    // Preparar datos para los items de la orden
     const itemsPayload = itemsForInsert.map(i => ({
       order_id: order.id,
       product_id: i.product_id,
@@ -122,21 +122,26 @@ export async function POST(req: NextRequest) {
       unit_price: i.unit_price,
       qty: i.qty,
     }));
-    console.log("✍️ Inserting into 'order_items':", itemsPayload); // Log #11
+    console.log("✍️ Inserting into 'order_items':", itemsPayload);
 
     const { error: itemsErr } = await supabaseAdmin.from("order_items").insert(itemsPayload);
     if (itemsErr) throw itemsErr;
 
-    console.log("✅ Order items inserted successfully."); // Log #12
+    console.log("✅ Order items inserted successfully.");
     console.log("🎉 SUCCESS! Order fully processed:", { orderId: order.id, number: folio });
     
     return NextResponse.json({ received: true });
 
-  } catch (e: any) {
-    // Este log es el más importante si algo falla dentro del try
+  } catch (e) {
     console.error("--- ❌ STRIPE WEBHOOK PROCESSING ERROR ---");
-    console.error(e);
+    console.error("El objeto de error completo es:", e);
     console.error("-----------------------------------------");
-    return NextResponse.json({ error: e?.message || "Server error" }, { status: 500 });
+
+    let errorMessage = "An unknown server error occurred.";
+    if (e instanceof Error) {
+      errorMessage = e.message;
+    }
+
+    return NextResponse.json({ error: errorMessage }, { status: 500 });
   }
 }

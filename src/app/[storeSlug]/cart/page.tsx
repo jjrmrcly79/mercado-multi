@@ -8,7 +8,7 @@ export default function CartPage({ params }: { params: { storeSlug: string } }) 
   const { storeSlug } = params;
   const { items, setQty, removeItem, subtotal, total } = useCart();
 
-  if (!items.length) {
+  if (!items || items.length === 0) {
     return (
       <div className="space-y-3">
         <h1 className="text-2xl font-semibold">Carrito</h1>
@@ -35,15 +35,14 @@ export default function CartPage({ params }: { params: { storeSlug: string } }) 
               type="number"
               min={1}
               value={x.qty}
-              onChange={(e)=>setQty(x.id, Math.max(1, parseInt(e.target.value||"1")))}
+              onChange={(e) => setQty(x.id, Math.max(1, parseInt(e.target.value || "1")))}
               className="w-16 rounded border px-2 py-1"
             />
-            <button className="rounded border px-3 py-1" onClick={()=>removeItem(x.id)}>Eliminar</button>
+            <button className="rounded border px-3 py-1 text-sm hover:bg-gray-100" onClick={() => removeItem(x.id)}>Eliminar</button>
           </div>
         ))}
       </div>
 
-      {/* Resumen + botón de pago */}
       <div className="rounded border bg-white p-3">
         <div className="flex justify-between">
           <span>Subtotal</span>
@@ -61,7 +60,6 @@ export default function CartPage({ params }: { params: { storeSlug: string } }) 
   );
 }
 
-/* === AQUÍ ABAJO ESTÁ EL COMPONENTE CheckoutButton === */
 function CheckoutButton() {
   const { items } = useCart();
   const { storeSlug } = useParams<{ storeSlug: string }>();
@@ -69,38 +67,51 @@ function CheckoutButton() {
   const [err, setErr] = useState<string | null>(null);
 
   async function goCheckout() {
-  try {
-    setLoading(true); setErr(null);
-    const payload = {
-      storeSlug,
-      items: items.map(x => ({ id: x.id, qty: x.qty })),
-    };
-    const res = await fetch("/api/checkout/session", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
+    setLoading(true);
+    setErr(null);
+    try {
+      const payload = {
+        storeSlug,
+        items: items.map(x => ({ id: x.id, qty: x.qty })),
+      };
 
-    const text = await res.text();
-    let data: any = {};
-    try { data = JSON.parse(text); } catch { /* HTML u otro formato */ }
+      const res = await fetch("/api/checkout/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
 
-    if (!res.ok) {
-      throw new Error(data?.error || text || "No se pudo crear la sesión");
+      const responseText = await res.text();
+      let data;
+
+      try {
+        data = JSON.parse(responseText);
+      } catch (_error) { // ✅ CORRECCIÓN: Se cambió 'error' por '_error'
+        // Si el parseo falla, el texto de la respuesta es el error
+        throw new Error(`Respuesta inválida del servidor: ${responseText}`);
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || "No se pudo crear la sesión de pago.");
+      }
+
+      if (!data?.url) {
+        throw new Error("La respuesta del servidor no incluyó una URL de checkout.");
+      }
+
+      window.location.href = data.url;
+
+    } catch (e) {
+      let errorMessage = "Ocurrió un error desconocido.";
+      if (e instanceof Error) {
+        errorMessage = e.message;
+      }
+      console.error("Checkout Error:", errorMessage);
+      setErr(errorMessage);
+    } finally {
+      setLoading(false);
     }
-
-    if (!data?.url) {
-      throw new Error("Respuesta sin URL de checkout");
-    }
-
-    window.location.href = data.url;
-  } catch (e: any) {
-    setErr(e.message || "Error");
-  } finally {
-    setLoading(false);
   }
-}
-
 
   return (
     <>

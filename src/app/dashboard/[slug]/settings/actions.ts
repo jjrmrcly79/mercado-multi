@@ -1,33 +1,36 @@
-// src/app/dashboard/[slug]/settings/actions.ts
-
-'use server';
-
 import { createServerClient } from '@/lib/supabase/server';
 import { revalidatePath } from 'next/cache';
 
+// Define a specific type for the data you intend to update
+type StoreUpdatePayload = {
+  primary_color: string;
+  secondary_color: string;
+  logo_url?: string; // logo_url is optional
+};
+
 export async function updateStoreSettings(formData: FormData) {
-  // --- FIX IS HERE ---
   const supabase = await createServerClient();
 
   const storeId = formData.get('storeId') as string;
   const slug = formData.get('slug') as string;
-  const logoFile = formData.get('logo') as File;
+  const logoFile = formData.get('logo') as File | null; // Handle null case
   const primaryColor = formData.get('primary_color') as string;
   const secondaryColor = formData.get('secondary_color') as string;
 
-  if (!storeId) {
-    throw new Error('Store ID is required');
+  if (!storeId || !slug) {
+    throw new Error('Store ID and slug are required');
   }
 
-  let logoUrl = null;
+  let logoUrl: string | null = null;
 
+  // Handle logo upload if a file is provided
   if (logoFile && logoFile.size > 0) {
-    const filePath = `public/${storeId}/logo-${Date.now()}.${logoFile.name.split('.').pop()}`;
+    const filePath = `public/${storeId}/logo-${Date.now()}`;
     
     const { error: uploadError } = await supabase.storage
       .from('store-logos')
       .upload(filePath, logoFile, {
-        upsert: true,
+        upsert: true, // Overwrite if exists
       });
 
     if (uploadError) {
@@ -35,14 +38,16 @@ export async function updateStoreSettings(formData: FormData) {
       throw new Error('Could not upload logo');
     }
 
-    const { data: { publicUrl } } = supabase.storage
+    // Get the public URL of the uploaded file
+    const { data } = supabase.storage
       .from('store-logos')
       .getPublicUrl(filePath);
     
-    logoUrl = publicUrl;
+    logoUrl = data.publicUrl;
   }
 
-  const updates: { [key: string]: any } = {
+  // Build the object with the data to update
+  const updates: StoreUpdatePayload = {
     primary_color: primaryColor,
     secondary_color: secondaryColor,
   };
@@ -51,6 +56,7 @@ export async function updateStoreSettings(formData: FormData) {
     updates.logo_url = logoUrl;
   }
 
+  // Perform the database update
   const { error: dbError } = await supabase
     .from('stores')
     .update(updates)
@@ -58,8 +64,12 @@ export async function updateStoreSettings(formData: FormData) {
 
   if (dbError) {
     console.error('Error updating store:', dbError);
+    // You can throw an error to indicate failure
     throw new Error('Could not update store settings');
   }
 
+  // Revalidate the path to show the updated data
   revalidatePath(`/dashboard/${slug}/settings`);
+
+
 }

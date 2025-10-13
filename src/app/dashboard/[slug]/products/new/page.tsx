@@ -47,20 +47,24 @@ export default function NewProduct() {
       }
 
       // 3) imagen (opcional)
-      if (image) {
-        const { error: eImg } = await supabase.from("media").insert({
-          product_id: prod.id, url: image, alt: title, sort: 0
-        });
-        if (eImg) throw eImg;
-      }
-
-      router.replace(`/dashboard/${slug}/products`);
-    } catch (e:any) {
-      setError(e.message ?? "Error desconocido");
-    } finally {
-      setLoading(false);
+if (image) {
+      const { error: eImg } = await supabase.from("media").insert({
+        product_id: prod.id, url: image, alt: title, sort: 0
+      });
+      if (eImg) throw eImg;
     }
+
+    router.replace(`/dashboard/${slug}/products`);
+  } catch (e) {
+    if (e instanceof Error) {
+      setError(e.message);
+    } else {
+      setError("An unknown error occurred");
+    }
+  } finally {
+    setLoading(false);
   }
+}
 
   if (!storeId) return <p>Cargando…</p>;
 

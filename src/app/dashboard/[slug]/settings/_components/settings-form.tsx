@@ -1,12 +1,8 @@
-// src/app/dashboard/[slug]/settings/_components/settings-form.tsx
-
 'use client';
 
 import { useState } from 'react';
 import Image from 'next/image';
-import { updateStoreSettings } from '../actions'; // We will create this action next
 
-// Define the type for the store prop
 type Store = {
   id: string;
   slug: string;
@@ -16,7 +12,14 @@ type Store = {
   secondary_color: string | null;
 };
 
-export function SettingsForm({ store }: { store: Store }) {
+// ✅ CORRECCIÓN: Este es el tipo que causa el error.
+// Debe ser Promise<void> para coincidir con la acción del servidor.
+type SettingsFormProps = {
+  store: Store;
+  action: (formData: FormData) => Promise<void>; 
+};
+
+export function SettingsForm({ store, action }: SettingsFormProps) {
   // State for the logo preview
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
 
@@ -29,7 +32,8 @@ export function SettingsForm({ store }: { store: Store }) {
   };
 
   return (
-    <form action={updateStoreSettings} className="max-w-xl space-y-8">
+    // ✅ Use the 'action' prop passed from the parent Server Component
+    <form action={action} className="max-w-xl space-y-8">
       {/* Hidden input to pass the store ID to the server action */}
       <input type="hidden" name="storeId" value={store.id} />
       {/* Hidden input to pass the slug for proper revalidation */}
@@ -101,10 +105,7 @@ export function SettingsForm({ store }: { store: Store }) {
         </div>
       </div>
       
-      <button
-        type="submit"
-        className="rounded-md bg-black px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800"
-      >
+      <button type="submit">
         Save Changes
       </button>
     </form>

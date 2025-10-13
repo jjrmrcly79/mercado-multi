@@ -5,19 +5,27 @@ import { useCart } from "./CartProvider";
 
 export default function CartButton() {
   const pathname = usePathname();
-  // extraer storeSlug si estás en /{slug} o /{slug}/cart
-  const slugMatch = pathname?.split("/").filter(Boolean)[0] || "";
-  let btn = <span>Cart</span>;
+  
+  // ✅ CORRECCIÓN: El hook se llama incondicionalmente en el nivel superior.
+  const cartContext = useCart();
 
-  try {
-    // si existe provider, mostramos conteo
-    const { count } = useCart() as any;
-    btn = <span>Cart ({count})</span>;
-  } catch { /* no hay provider en esta ruta */ }
+  // Extraer storeSlug si estás en /{slug} o /{slug}/cart
+  const slugMatch = pathname?.split("/").filter(Boolean)[0] || "";
+  
+  // Determinar el contenido del botón de forma segura.
+  // Si cartContext no existe (porque no hay Provider), muestra 'Cart' por defecto.
+  const buttonContent = cartContext ? (
+    <span>Cart ({cartContext.count})</span>
+  ) : (
+    <span>Cart</span>
+  );
 
   return (
-    <Link href={`/${slugMatch ? slugMatch : ""}/cart`} className="rounded bg-black px-3 py-2 text-white">
-      {btn}
+    <Link 
+      href={`/${slugMatch}/cart`} 
+      className="rounded bg-black px-3 py-2 text-white"
+    >
+      {buttonContent}
     </Link>
   );
 }
