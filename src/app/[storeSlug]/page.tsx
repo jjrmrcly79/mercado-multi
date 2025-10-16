@@ -8,6 +8,34 @@ import { useCart } from "@/components/CartProvider";
 
 type Item = { id: string; title: string; price: number; media_url: string | null };
 
+// Cambia este nombre si tu bucket por defecto es otro
+const DEFAULT_BUCKET = "products";
+
+/**
+ * Convierte lo que venga de la BD (media_url / path) a un URL público.
+ * - Si ya es http(s), lo respeta.
+ * - Soporta "bucket:path/archivo.jpg" y "bucket/path/archivo.jpg".
+ * - Si solo viene un path, usa DEFAULT_BUCKET.
+ */
+function toPublicUrl(raw: string | null) {
+  if (!raw) return null;
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+
+  const cleaned = raw.replace(":", "/"); // soporta bucket:path
+  const parts = cleaned.split("/");
+  let bucket = DEFAULT_BUCKET;
+  let path = cleaned;
+
+  // Si viene "bucket/lo-que-sigue", tomamos el bucket explícito
+  if (parts.length > 1 && !cleaned.startsWith("/")) {
+    bucket = parts[0];
+    path = parts.slice(1).join("/");
+  }
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+  return data?.publicUrl ?? null;
+}
+
 export default function StorePage() {
   const { storeSlug } = useParams<{ storeSlug: string }>();
   const [items, setItems] = useState<Item[]>([]);
@@ -18,17 +46,44 @@ export default function StorePage() {
 
   useEffect(() => {
     (async () => {
-      setLoading(true); setErr(null);
+      setLoading(true);
+      setErr(null);
 
       // 1) obtener storeId vía RPC pública (evita RLS en stores)
       const { data: storeId, error: eId } = await supabase.rpc("store_id_by_slug", { p_slug: storeSlug });
-      if (eId || !storeId) { setErr("Tienda no encontrada."); setItems([]); setLoading(false); return; }
+      if (eId || !storeId) {
+        setErr("Tienda no encontrada.");
+        setItems([]);
+        setLoading(false);
+        return;
+      }
 
-      // 2) productos públicos
+      // 2) productos públicos (la RPC puede devolver media_url, image_path, etc.)
       const { data, error } = await supabase.rpc("public_store_products", { p_store: storeId });
-      if (error) { setErr(error.message); setItems([]); }
-      else setItems((data ?? []) as Item[]);
+      if (error) {
+        setErr(error.message);
+        setItems([]);
+        setLoading(false);
+        return;
+      }
 
+      const normalized = (data ?? []).map((p: any) => {
+        const raw =
+          p.media_url ??
+          p.image_url ??
+          p.image_path ??
+          p.object_path ??
+          p.path ??
+          null;
+
+        return {
+          ...p,
+          media_url: toPublicUrl(raw),
+          price: Number(p.price),
+        } as Item;
+      });
+
+      setItems(normalized);
       setLoading(false);
     })();
   }, [storeSlug]);
@@ -51,7 +106,11 @@ export default function StorePage() {
         {items.map((p) => (
           <div key={p.id} className="rounded border bg-white p-3">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={p.media_url ?? "https://placehold.co/600x400?text=No+image"} alt={p.title} className="mb-2 h-40 w-full rounded object-cover" />
+            <img
+              src={p.media_url ?? "https://placehold.co/600x400?text=Sin+imagen"}
+              alt={p.title}
+              className="mb-2 h-40 w-full rounded object-cover"
+            />
             <div className="space-y-1">
               <div className="font-medium">{p.title}</div>
               <div className="text-lg font-semibold">${Number(p.price).toFixed(2)}</div>
